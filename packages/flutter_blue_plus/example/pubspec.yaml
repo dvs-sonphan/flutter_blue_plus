@@ -16,7 +16,8 @@ dependencies:
     # Note: We use a path dependency because the example app & plugin are bundled together.
     # In *your* app you should use ^1.17.3 or similar
     path: ../
-
+  shared_preferences: ^2.5.3
+shared_preferences: ^2.0.0 # Thêm dòng này
 dev_dependencies:
   flutter_lints: ^5.0.0
 

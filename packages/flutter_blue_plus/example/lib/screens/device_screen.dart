@@ -1,18 +1,31 @@
+// packages/flutter_blue_plus/example/lib/screens/device_screen.dart
+
 import 'dart:async';
+import 'dart:convert'; // Import this for utf8.encode
 
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Thêm import này cho SharedPreferences
 
-import '../widgets/service_tile.dart';
-import '../widgets/characteristic_tile.dart';
-import '../widgets/descriptor_tile.dart';
+// Đã loại bỏ các imports không cần thiết nếu bạn xóa ServiceTile và CharacteristicTile
+// import '../widgets/service_tile.dart';
+// import '../widgets/characteristic_tile.dart';
+// import '../widgets/descriptor_tile.dart';
+
 import '../utils/snackbar.dart';
 import '../utils/extra.dart';
 
 class DeviceScreen extends StatefulWidget {
   final BluetoothDevice device;
+  final String? username;
+  final String? password;
 
-  const DeviceScreen({super.key, required this.device});
+  const DeviceScreen({
+    super.key,
+    required this.device,
+    this.username,
+    this.password,
+  });
 
   @override
   State<DeviceScreen> createState() => _DeviceScreenState();
@@ -20,17 +33,23 @@ class DeviceScreen extends StatefulWidget {
 
 class _DeviceScreenState extends State<DeviceScreen> {
   int? _rssi;
-  int? _mtuSize;
   BluetoothConnectionState _connectionState = BluetoothConnectionState.disconnected;
-  List<BluetoothService> _services = [];
-  bool _isDiscoveringServices = false;
   bool _isConnecting = false;
   bool _isDisconnecting = false;
 
   late StreamSubscription<BluetoothConnectionState> _connectionStateSubscription;
   late StreamSubscription<bool> _isConnectingSubscription;
   late StreamSubscription<bool> _isDisconnectingSubscription;
-  late StreamSubscription<int> _mtuSubscription;
+
+  // --- BLE Service & Characteristic UUIDs for Lock/Unlock ---
+  static const String SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
+  static const String CONTROL_CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
+  // --- End BLE Service & Characteristic UUIDs ---
+
+  BluetoothCharacteristic? _controlCharacteristic;
+
+  // Khóa lưu trữ tên BLE
+  static const String _KEY_SAVED_BLE_DEVICE_NAME = 'savedBleDeviceName';
 
   @override
   void initState() {
@@ -39,18 +58,12 @@ class _DeviceScreenState extends State<DeviceScreen> {
     _connectionStateSubscription = widget.device.connectionState.listen((state) async {
       _connectionState = state;
       if (state == BluetoothConnectionState.connected) {
-        _services = []; // must rediscover services
+        _findControlCharacteristic(); // Vẫn cần tìm characteristic để gửi lệnh
+        _saveDeviceName(widget.device.advName); // LƯU TÊN THIẾT BỊ KHI KẾT NỐI THÀNH CÔNG
       }
       if (state == BluetoothConnectionState.connected && _rssi == null) {
         _rssi = await widget.device.readRssi();
       }
-      if (mounted) {
-        setState(() {});
-      }
-    });
-
-    _mtuSubscription = widget.device.mtu.listen((value) {
-      _mtuSize = value;
       if (mounted) {
         setState(() {});
       }
@@ -74,7 +87,6 @@ class _DeviceScreenState extends State<DeviceScreen> {
   @override
   void dispose() {
     _connectionStateSubscription.cancel();
-    _mtuSubscription.cancel();
     _isConnectingSubscription.cancel();
     _isDisconnectingSubscription.cancel();
     super.dispose();
@@ -84,6 +96,16 @@ class _DeviceScreenState extends State<DeviceScreen> {
     return _connectionState == BluetoothConnectionState.connected;
   }
 
+  // Hàm lưu tên thiết bị vào SharedPreferences
+  Future<void> _saveDeviceName(String deviceName) async {
+    if (deviceName.isNotEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_KEY_SAVED_BLE_DEVICE_NAME, deviceName);
+      FlutterBluePlus.log("[FBP] Saved device name for auto-connect: $deviceName");
+    }
+  }
+
+  // Hàm kết nối
   Future onConnectPressed() async {
     try {
       await widget.device.connectAndUpdateStream();
@@ -99,6 +121,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
     }
   }
 
+  // Hàm hủy kết nối đang diễn ra
   Future onCancelPressed() async {
     try {
       await widget.device.disconnectAndUpdateStream(queue: false);
@@ -110,6 +133,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
     }
   }
 
+  // Hàm ngắt kết nối
   Future onDisconnectPressed() async {
     try {
       await widget.device.disconnectAndUpdateStream();
@@ -120,54 +144,70 @@ class _DeviceScreenState extends State<DeviceScreen> {
     }
   }
 
-  Future onDiscoverServicesPressed() async {
-    if (mounted) {
-      setState(() {
-        _isDiscoveringServices = true;
-      });
+  // Hàm tìm đặc tính điều khiển
+  void _findControlCharacteristic() async {
+    _controlCharacteristic = null; // Reset
+
+    try {
+      List<BluetoothService> discoveredServices = await widget.device.discoverServices();
+
+      for (var service in discoveredServices) {
+        if (service.uuid == Guid(SERVICE_UUID)) {
+          for (var characteristic in service.characteristics) {
+            if (characteristic.uuid == Guid(CONTROL_CHARACTERISTIC_UUID)) {
+              _controlCharacteristic = characteristic;
+              print("Found control characteristic: ${characteristic.uuid}");
+              break;
+            }
+          }
+        }
+        if (_controlCharacteristic != null) break;
+      }
+      if (_controlCharacteristic == null) {
+        print("Control characteristic not found. Make sure SERVICE_UUID and CONTROL_CHARACTERISTIC_UUID are correct.");
+      }
+    } catch (e) {
+      print("Error discovering services in _findControlCharacteristic: $e");
+    }
+  }
+
+  // Hàm ghi lệnh điều khiển
+  Future _writeControlCommand(List<int> command) async {
+    if (_controlCharacteristic == null) {
+      Snackbar.show(ABC.c, "Control characteristic not found!", success: false);
+      return;
+    }
+    if (!isConnected) {
+      Snackbar.show(ABC.c, "Device is disconnected!", success: false);
+      return;
     }
     try {
-      _services = await widget.device.discoverServices();
-      Snackbar.show(ABC.c, "Discover Services: Success", success: true);
+      await _controlCharacteristic!
+          .write(command, withoutResponse: _controlCharacteristic!.properties.writeWithoutResponse);
+      Snackbar.show(ABC.c, "Command sent: ${utf8.decode(command)}", success: true);
     } catch (e, backtrace) {
-      Snackbar.show(ABC.c, prettyException("Discover Services Error:", e), success: false);
+      Snackbar.show(ABC.c, prettyException("Write Command Error:", e), success: false);
       print(e);
       print("backtrace: $backtrace");
     }
-    if (mounted) {
-      setState(() {
-        _isDiscoveringServices = false;
-      });
-    }
   }
 
-  Future onRequestMtuPressed() async {
-    try {
-      await widget.device.requestMtu(223, predelay: 0);
-      Snackbar.show(ABC.c, "Request Mtu: Success", success: true);
-    } catch (e, backtrace) {
-      Snackbar.show(ABC.c, prettyException("Change Mtu Error:", e), success: false);
-      print(e);
-      print("backtrace: $backtrace");
-    }
+  // Hàm xử lý khi nhấn nút LOCK
+  Future onLockPressed() async {
+    final username = widget.username ?? "default_user";
+    final password = widget.password ?? "default_pass";
+    final lockCommandString = "$username,$password,LOCK#";
+    final lockCommandBytes = utf8.encode(lockCommandString);
+    await _writeControlCommand(lockCommandBytes);
   }
 
-  List<Widget> _buildServiceTiles(BuildContext context, BluetoothDevice d) {
-    return _services
-        .map(
-          (s) => ServiceTile(
-            service: s,
-            characteristicTiles: s.characteristics.map((c) => _buildCharacteristicTile(c)).toList(),
-          ),
-        )
-        .toList();
-  }
-
-  CharacteristicTile _buildCharacteristicTile(BluetoothCharacteristic c) {
-    return CharacteristicTile(
-      characteristic: c,
-      descriptorTiles: c.descriptors.map((d) => DescriptorTile(descriptor: d)).toList(),
-    );
+  // Hàm xử lý khi nhấn nút UNLOCK
+  Future onUnlockPressed() async {
+    final username = widget.username ?? "default_user";
+    final password = widget.password ?? "default_pass";
+    final unlockCommandString = "$username,$password,UNLOCK#";
+    final unlockCommandBytes = utf8.encode(unlockCommandString);
+    await _writeControlCommand(unlockCommandBytes);
   }
 
   Widget buildSpinner(BuildContext context) {
@@ -198,38 +238,6 @@ class _DeviceScreenState extends State<DeviceScreen> {
         Text(((isConnected && _rssi != null) ? '${_rssi!} dBm' : ''), style: Theme.of(context).textTheme.bodySmall)
       ],
     );
-  }
-
-  Widget buildGetServices(BuildContext context) {
-    return IndexedStack(
-      index: (_isDiscoveringServices) ? 1 : 0,
-      children: <Widget>[
-        TextButton(
-          onPressed: onDiscoverServicesPressed,
-          child: const Text("Get Services"),
-        ),
-        const IconButton(
-          icon: SizedBox(
-            width: 18.0,
-            height: 18.0,
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation(Colors.grey),
-            ),
-          ),
-          onPressed: null,
-        )
-      ],
-    );
-  }
-
-  Widget buildMtuTile(BuildContext context) {
-    return ListTile(
-        title: const Text('MTU Size'),
-        subtitle: Text('$_mtuSize bytes'),
-        trailing: IconButton(
-          icon: const Icon(Icons.edit),
-          onPressed: onRequestMtuPressed,
-        ));
   }
 
   Widget buildConnectButton(BuildContext context) {
@@ -264,10 +272,43 @@ class _DeviceScreenState extends State<DeviceScreen> {
               ListTile(
                 leading: buildRssiTile(context),
                 title: Text('Device is ${_connectionState.toString().split('.')[1]}.'),
-                trailing: buildGetServices(context),
               ),
-              buildMtuTile(context),
-              ..._buildServiceTiles(context, widget.device),
+              if (isConnected && _controlCharacteristic != null) ...[
+                const Divider(),
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      // Nút LOCK
+                      ElevatedButton(
+                        onPressed: onLockPressed,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Theme.of(context).primaryColor,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: Text(
+                          'LOCK',
+                          style: Theme.of(context).primaryTextTheme.labelLarge?.copyWith(color: Colors.white),
+                        ),
+                      ),
+                      // Nút UNLOCK
+                      ElevatedButton(
+                        onPressed: onUnlockPressed,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Theme.of(context).primaryColor,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: Text(
+                          'UNLOCK',
+                          style: Theme.of(context).primaryTextTheme.labelLarge?.copyWith(color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(),
+              ],
             ],
           ),
         ),

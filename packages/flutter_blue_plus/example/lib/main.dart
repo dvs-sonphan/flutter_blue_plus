@@ -1,6 +1,4 @@
-// Copyright 2017-2023, Charles Weinberger & Paul DeMarco.
-// All rights reserved. Use of this source code is governed by a
-// BSD-style license that can be found in the LICENSE file.
+// packages/flutter_blue_plus/example/lib/main.dart
 
 import 'dart:async';
 
@@ -8,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import 'screens/bluetooth_off_screen.dart';
-import 'screens/scan_screen.dart';
+import 'screens/login_screen.dart'; // Import the new LoginScreen
 
 void main() {
   FlutterBluePlus.setLogLevel(LogLevel.verbose, color: true);
@@ -50,9 +48,11 @@ class _FlutterBlueAppState extends State<FlutterBlueApp> {
 
   @override
   Widget build(BuildContext context) {
+    // Start with LoginScreen regardless of Bluetooth state
+    // Bluetooth state will be checked when navigating to ScanScreen
     Widget screen = _adapterState == BluetoothAdapterState.on
-        ? const ScanScreen()
-        : BluetoothOffScreen(adapterState: _adapterState);
+        ? const LoginScreen() // Start with LoginScreen if Bluetooth is on
+        : BluetoothOffScreen(adapterState: _adapterState); // Keep BluetoothOffScreen if adapter is off
 
     return MaterialApp(
       color: Colors.lightBlue,
