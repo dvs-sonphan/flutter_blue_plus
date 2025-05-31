@@ -7,11 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // Thêm import này cho SharedPreferences
 
-// Đã loại bỏ các imports không cần thiết nếu bạn xóa ServiceTile và CharacteristicTile
-// import '../widgets/service_tile.dart';
-// import '../widgets/characteristic_tile.dart';
-// import '../widgets/descriptor_tile.dart';
-
 import '../utils/snackbar.dart';
 import '../utils/extra.dart';
 
@@ -50,6 +45,10 @@ class _DeviceScreenState extends State<DeviceScreen> {
 
   // Khóa lưu trữ tên BLE
   static const String _KEY_SAVED_BLE_DEVICE_NAME = 'savedBleDeviceName';
+
+  // Thêm biến trạng thái cho màu của các nút
+  bool _isLockPressed = false;
+  bool _isUnlockPressed = false;
 
   @override
   void initState() {
@@ -172,7 +171,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
   }
 
   // Hàm ghi lệnh điều khiển
-  Future _writeControlCommand(List<int> command) async {
+  Future _writeControlCommand(List<int> command, String commandType) async {
     if (_controlCharacteristic == null) {
       Snackbar.show(ABC.c, "Control characteristic not found!", success: false);
       return;
@@ -184,7 +183,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
     try {
       await _controlCharacteristic!
           .write(command, withoutResponse: _controlCharacteristic!.properties.writeWithoutResponse);
-      Snackbar.show(ABC.c, "Command sent: ${utf8.decode(command)}", success: true);
+      Snackbar.show(ABC.c, commandType == "LOCK" ? "Car LOCK" : "Car UNLOCK", success: true);
     } catch (e, backtrace) {
       Snackbar.show(ABC.c, prettyException("Write Command Error:", e), success: false);
       print(e);
@@ -198,7 +197,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
     final password = widget.password ?? "default_pass";
     final lockCommandString = "$username,$password,LOCK#";
     final lockCommandBytes = utf8.encode(lockCommandString);
-    await _writeControlCommand(lockCommandBytes);
+    await _writeControlCommand(lockCommandBytes, "LOCK");
   }
 
   // Hàm xử lý khi nhấn nút UNLOCK
@@ -207,7 +206,22 @@ class _DeviceScreenState extends State<DeviceScreen> {
     final password = widget.password ?? "default_pass";
     final unlockCommandString = "$username,$password,UNLOCK#";
     final unlockCommandBytes = utf8.encode(unlockCommandString);
-    await _writeControlCommand(unlockCommandBytes);
+    await _writeControlCommand(unlockCommandBytes, "UNLOCK");
+  }
+
+  // Hàm reset màu nút sau khi nhấn
+  void _resetButtonColor({required bool isLock}) {
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        setState(() {
+          if (isLock) {
+            _isLockPressed = false;
+          } else {
+            _isUnlockPressed = false;
+          }
+        });
+      }
+    });
   }
 
   Widget buildSpinner(BuildContext context) {
@@ -263,54 +277,75 @@ class _DeviceScreenState extends State<DeviceScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.device.platformName),
-          actions: [buildConnectButton(context), const SizedBox(width: 15)],
+          actions: [buildConnectButton(context), const SizedBox(width: 20.0)], // Khoảng cách 20.0
         ),
-        body: SingleChildScrollView(
-          child: Column(
-            children: <Widget>[
-              buildRemoteId(context),
-              ListTile(
-                leading: buildRssiTile(context),
-                title: Text('Device is ${_connectionState.toString().split('.')[1]}.'),
+        body: Column(
+          children: [
+            // Đặt buildRemoteId và ListTile ở phía trên
+            buildRemoteId(context),
+            ListTile(
+              leading: buildRssiTile(context),
+              title: Text('Device is ${_connectionState.toString().split('.')[1]}.'),
+            ),
+            // Khu vực căn giữa cho các nút LOCK và UNLOCK
+            Expanded(
+              child: Center(
+                child: isConnected && _controlCharacteristic != null
+                    ? Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            // Nút LOCK với biểu tượng ổ khóa
+                            ElevatedButton(
+                              onPressed: () async {
+                                setState(() {
+                                  _isLockPressed = true;
+                                });
+                                await onLockPressed();
+                                _resetButtonColor(isLock: true); // Reset màu sau 300ms
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: _isLockPressed ? Colors.red : Colors.orange, // Màu cam mặc định
+                                foregroundColor: Colors.white,
+                                shape: const CircleBorder(), // Hình tròn
+                                padding: const EdgeInsets.all(45.0), // Tăng kích thước nút
+                              ),
+                              child: const Icon(
+                                Icons.lock,
+                                color: Colors.white,
+                                size: 40.0, // Tăng kích thước biểu tượng
+                              ),
+                            ),
+                            const SizedBox(height: 40.0), // Khoảng cách giữa LOCK và UNLOCK
+                            // Nút UNLOCK với biểu tượng ổ khóa mở
+                            ElevatedButton(
+                              onPressed: () async {
+                                setState(() {
+                                  _isUnlockPressed = true;
+                                });
+                                await onUnlockPressed();
+                                _resetButtonColor(isLock: false); // Reset màu sau 300ms
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: _isUnlockPressed ? Colors.red : Colors.orange, // Màu cam mặc định
+                                foregroundColor: Colors.white,
+                                shape: const CircleBorder(), // Hình tròn
+                                padding: const EdgeInsets.all(45.0), // Tăng kích thước nút
+                              ),
+                              child: const Icon(
+                                Icons.lock_open,
+                                color: Colors.white,
+                                size: 40.0, // Tăng kích thước biểu tượng
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : const SizedBox.shrink(), // Ẩn nếu không kết nối
               ),
-              if (isConnected && _controlCharacteristic != null) ...[
-                const Divider(),
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      // Nút LOCK
-                      ElevatedButton(
-                        onPressed: onLockPressed,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(context).primaryColor,
-                          foregroundColor: Colors.white,
-                        ),
-                        child: Text(
-                          'LOCK',
-                          style: Theme.of(context).primaryTextTheme.labelLarge?.copyWith(color: Colors.white),
-                        ),
-                      ),
-                      // Nút UNLOCK
-                      ElevatedButton(
-                        onPressed: onUnlockPressed,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(context).primaryColor,
-                          foregroundColor: Colors.white,
-                        ),
-                        child: Text(
-                          'UNLOCK',
-                          style: Theme.of(context).primaryTextTheme.labelLarge?.copyWith(color: Colors.white),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(),
-              ],
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

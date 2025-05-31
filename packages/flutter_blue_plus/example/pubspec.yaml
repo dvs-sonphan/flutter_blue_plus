@@ -12,6 +12,7 @@ dependencies:
   flutter:
     sdk: flutter
 
+
   flutter_blue_plus:
     # Note: We use a path dependency because the example app & plugin are bundled together.
     # In *your* app you should use ^1.17.3 or similar
@@ -20,7 +21,7 @@ dependencies:
 shared_preferences: ^2.0.0 # Thêm dòng này
 dev_dependencies:
   flutter_lints: ^5.0.0
-
+  flutter_launcher_icons: ^0.13.1
 dependency_overrides:
   # Note: We use these dependency overrides to test the example app with the latest changes.
   # In *your* app you should not add these overrides
@@ -37,6 +38,16 @@ dependency_overrides:
 
 flutter:
   uses-material-design: true
-
+  assets:
+    - assets/images/logo_xhx_full.png
+    - assets/images/logo_incon.png
   # see https://docs.flutter.dev/packages-and-plugins/swift-package-manager/for-app-developers
   # disable-swift-package-manager: true
+flutter_launcher_icons:
+  android: "launcher_icon" # Tên icon trên Android
+  ios: true # Tạo icon cho iOS
+  image_path: "assets/images/logo_incon.png" # Đường dẫn đến file icon gốc của bạn (PNG, độ phân giải cao)
+  min_sdk_android: 21 # Phiên bản Android SDK tối thiểu
+  remove_alpha_ios: true # Xóa kênh alpha cho iOS (nếu bạn không muốn icon có nền trong suốt trên iOS)
+  # adaptive_icon_background: "#FFFFFF" # (Tùy chọn) Màu nền cho Adaptive Icon của Android 8+
+  # adaptive_icon_foreground: "assets/images/your_app_icon_foreground.png" # (Tùy chọn) Icon foreground cho Adaptive Icon

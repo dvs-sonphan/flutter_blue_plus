@@ -5,7 +5,7 @@ import 'package:flutter_blue_plus_example/screens/scan_screen.dart';
 import 'package:flutter_blue_plus_example/utils/snackbar.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({Key? key}) : super(key: key);
+  const LoginScreen({super.key});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -49,11 +49,19 @@ class _LoginScreenState extends State<LoginScreen> {
           title: const Text('Login'),
         ),
         body: Center(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(16.0),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                // Thêm Image.asset vào đây
+                Image.asset(
+                  'assets/images/logo_xhx_full.png', // Thay 'your_logo.png' bằng tên file ảnh của bạn
+                  height: 120, // Điều chỉnh chiều cao theo ý muốn
+                  width: 120, // Điều chỉnh chiều rộng theo ý muốn
+                ),
+                const SizedBox(height: 30), // Khoảng cách giữa logo và trường nhập liệu đầu tiên
+                // Kết thúc phần thêm logo
                 TextField(
                   controller: _usernameController,
                   decoration: const InputDecoration(

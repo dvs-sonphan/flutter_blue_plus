@@ -19,11 +19,11 @@ class ScanScreen extends StatefulWidget {
   final String? password; // Thêm biến password
 
   const ScanScreen({
-    Key? key,
+    super.key,
     this.initialDeviceNameToConnect,
     this.username, // Thêm vào constructor
     this.password, // Thêm vào constructor
-  }) : super(key: key);
+  });
 
   @override
   State<ScanScreen> createState() => _ScanScreenState();
