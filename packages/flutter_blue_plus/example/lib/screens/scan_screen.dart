@@ -5,7 +5,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 // ignore: depend_on_referenced_packages
-import 'package:shared_preferences/shared_preferences.dart'; // Thêm import này
 
 import 'device_screen.dart';
 import '../utils/snackbar.dart';
@@ -14,15 +13,13 @@ import '../widgets/scan_result_tile.dart';
 import '../utils/extra.dart';
 
 class ScanScreen extends StatefulWidget {
-  final String? initialDeviceNameToConnect;
-  final String? username; // Thêm biến username
-  final String? password; // Thêm biến password
+  final String? username; // Biến username
+  final String? password; // Biến password
 
   const ScanScreen({
     super.key,
-    this.initialDeviceNameToConnect,
-    this.username, // Thêm vào constructor
-    this.password, // Thêm vào constructor
+    this.username,
+    this.password,
   });
 
   @override
@@ -35,21 +32,18 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _isScanning = false;
   late StreamSubscription<List<ScanResult>> _scanResultsSubscription;
   late StreamSubscription<bool> _isScanningSubscription;
-  BluetoothDevice? _connectedDevice; // Track the automatically connected device
-
-  String? _savedDeviceNameForAutoConnect;
-  static const String _KEY_SAVED_BLE_DEVICE_NAME = 'savedBleDeviceName'; // Khóa lưu trữ
-  static const int _RSSI_THRESHOLD_3M = -75; // Ngưỡng RSSI ước tính 3m (cần điều chỉnh)
+  BluetoothDevice? _autoConnectingDevice; // Track the device currently being auto-connected
 
   @override
   void initState() {
     super.initState();
-    _loadSavedDeviceName(); // Tải tên thiết bị đã lưu khi khởi tạo màn hình
+    // Tăng cường logging để gỡ lỗi chi tiết hơn về BLE
+    FlutterBluePlus.setLogLevel(LogLevel.verbose);
 
     _scanResultsSubscription = FlutterBluePlus.scanResults.listen((results) {
       if (mounted) {
         setState(() => _scanResults = results);
-        _tryAutoConnectWithRssi(); // THAY ĐỔI: Thử auto-connect với RSSI
+        _tryAutoConnectWithUsername(); // Đổi tên hàm để phản ánh logic mới
       }
     }, onError: (e) {
       Snackbar.show(ABC.b, prettyException("Scan Error:", e), success: false);
@@ -68,69 +62,92 @@ class _ScanScreenState extends State<ScanScreen> {
   void dispose() {
     _scanResultsSubscription.cancel();
     _isScanningSubscription.cancel();
+    // Đảm bảo dừng quét khi rời màn hình để tiết kiệm pin
+    if (_isScanning) {
+      FlutterBluePlus.stopScan();
+    }
     super.dispose();
   }
 
   Future<void> _startInitialScan() async {
-    // Ensure Bluetooth adapter is on before starting scan
+    // Đảm bảo adapter Bluetooth đã bật trước khi quét
     await FlutterBluePlus.adapterState.where((val) => val == BluetoothAdapterState.on).first;
 
-    onScanPressed(); // Start scanning
-  }
+    // Kiểm tra xem đã có thiết bị nào đang kết nối không
+    // ignore: await_only_futures
+    final connectedDevices = await FlutterBluePlus.connectedDevices;
+    if (connectedDevices.isNotEmpty) {
+      // Loại bỏ khoảng trắng ở username
+      final trimmedUsername = widget.username?.trim();
 
-  // Tải tên thiết bị đã lưu từ SharedPreferences
-  Future<void> _loadSavedDeviceName() async {
-    final prefs = await SharedPreferences.getInstance();
-    _savedDeviceNameForAutoConnect = prefs.getString(_KEY_SAVED_BLE_DEVICE_NAME);
-    if (_savedDeviceNameForAutoConnect != null) {
-      FlutterBluePlus.log("[FBP] Loaded saved device name for auto-connect: $_savedDeviceNameForAutoConnect");
-    }
-  }
-
-  // THAY ĐỔI: Logic tự động kết nối dựa trên RSSI và tên đã lưu
-  void _tryAutoConnectWithRssi() {
-    // Ưu tiên kết nối lại thiết bị đã lưu theo RSSI
-    if (_savedDeviceNameForAutoConnect != null && _connectedDevice == null) {
-      for (ScanResult r in _scanResults) {
-        // Nếu tên thiết bị quét được trùng với tên đã lưu VÀ RSSI vượt ngưỡng
-        if (r.advertisementData.advName == _savedDeviceNameForAutoConnect && r.rssi >= _RSSI_THRESHOLD_3M) {
-          FlutterBluePlus.log(
-              "[FBP] Auto-connecting to saved device: ${r.advertisementData.advName} (RSSI: ${r.rssi})");
-          FlutterBluePlus.stopScan(); // Dừng quét
-          onConnectPressed(r.device); // Cố gắng kết nối
-          return; // Dừng lại sau khi tìm thấy và cố gắng kết nối
+      for (var d in connectedDevices) {
+        // Trim tên thiết bị đã kết nối
+        final trimmedPlatformName = d.platformName.trim();
+        if (trimmedUsername != null && trimmedPlatformName == trimmedUsername) {
+          // So sánh toàn bộ tên sau khi trim
+          FlutterBluePlus.log("[FBP] Found already connected device: ${d.platformName}");
+          if (mounted) {
+            _autoConnectingDevice = d; // Đặt thiết bị đã kết nối là thiết bị tự động kết nối
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (context) => DeviceScreen(
+                  device: d,
+                  username: widget.username,
+                  password: widget.password,
+                ),
+                settings: const RouteSettings(name: '/DeviceScreen'),
+              ),
+            );
+          }
+          return;
         }
       }
     }
-    // Nếu không có thiết bị đã lưu hoặc không tìm thấy trong phạm vi gần,
-    // thì thử tự động kết nối với thiết bị dựa trên tên đăng nhập (logic cũ)
-    if (widget.initialDeviceNameToConnect != null && _connectedDevice == null) {
-      for (ScanResult r in _scanResults) {
-        if (r.advertisementData.advName == widget.initialDeviceNameToConnect) {
-          FlutterBluePlus.log("[FBP] Auto-connecting to login device: ${r.advertisementData.advName}");
-          FlutterBluePlus.stopScan();
-          onConnectPressed(r.device);
-          return; // Dừng lại sau khi tìm thấy và cố gắng kết nối
-        }
+    onScanPressed(); // Start scanning if no device is connected
+  }
+
+  // Logic tự động kết nối dựa trên toàn bộ username (đã loại bỏ khoảng trắng)
+  void _tryAutoConnectWithUsername() {
+    // Chỉ tự động kết nối nếu username không rỗng và chưa có thiết bị nào đang được tự động kết nối
+    if (widget.username == null || widget.username!.isEmpty || _autoConnectingDevice != null) {
+      return;
+    }
+
+    // Sắp xếp kết quả quét theo RSSI giảm dần để ưu tiên thiết bị gần nhất
+    _scanResults.sort((a, b) => b.rssi.compareTo(a.rssi));
+
+    final expectedName = widget.username!.trim(); // Loại bỏ khoảng trắng từ username
+
+    for (ScanResult r in _scanResults) {
+      String advName = r.advertisementData.advName;
+      final trimmedAdvName = advName.trim(); // Loại bỏ khoảng trắng ở đầu và cuối advName
+
+      // So sánh toàn bộ tên sau khi loại bỏ khoảng trắng
+      if (trimmedAdvName == expectedName) {
+        FlutterBluePlus.log(
+            "[FBP] Found device with matching trimmed name for auto-connect: ${r.advertisementData.advName} (RSSI: ${r.rssi})");
+        FlutterBluePlus.stopScan(); // Dừng quét ngay lập tức
+        onConnectPressed(r.device); // Cố gắng kết nối
+        return; // Dừng lại sau khi tìm thấy và cố gắng kết nối
       }
     }
   }
 
   Future onScanPressed() async {
     try {
-      // FIX: Provide an empty list of Guids as the argument.
-      _systemDevices = await FlutterBluePlus.systemDevices(const []); // Corrected line
+      _systemDevices = await FlutterBluePlus.systemDevices(const []); // Lấy các thiết bị hệ thống đã biết
     } catch (e, backtrace) {
       Snackbar.show(ABC.b, prettyException("System Devices Error:", e), success: false);
       print(e);
       print("backtrace: $backtrace");
     }
     try {
-      await FlutterBluePlus.startScan(
-        timeout: const Duration(seconds: 15),
-        // Add services or names if known for faster filtering
-        // withNames: [widget.initialDeviceNameToConnect ?? ""], // Filter by the expected name
-      );
+      // Đảm bảo không quét khi đã kết nối hoặc đang cố gắng kết nối tự động
+      if (_autoConnectingDevice == null || !_autoConnectingDevice!.isConnected) {
+        await FlutterBluePlus.startScan(
+          timeout: const Duration(seconds: 10), // Giảm thời gian quét ban đầu
+        );
+      }
     } catch (e, backtrace) {
       Snackbar.show(ABC.b, prettyException("Start Scan Error:", e), success: false);
       print(e);
@@ -152,50 +169,74 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   void onConnectPressed(BluetoothDevice device) {
-    if (_connectedDevice != null && _connectedDevice!.remoteId == device.remoteId) {
-      // Already connecting/connected to this device
+    // Ngăn chặn kết nối lại nếu đã kết nối hoặc đang cố gắng kết nối với cùng một thiết bị
+    if (_autoConnectingDevice != null && _autoConnectingDevice!.remoteId == device.remoteId) {
       return;
     }
-    setState(() {
-      _connectedDevice = device;
-    });
+    _autoConnectingDevice = device; // Đánh dấu thiết bị đang được xử lý
+
     device.connectAndUpdateStream().catchError((e) {
-      Snackbar.show(ABC.c, prettyException("Connect Error:", e), success: false);
-      setState(() {
-        _connectedDevice = null; // Reset if connection fails
-      });
-    });
-    MaterialPageRoute route = MaterialPageRoute(
-      builder: (context) => DeviceScreen(
-        device: device,
-        username: widget.username, // Truyền username
-        password: widget.password, // Truyền password
-      ),
-      settings: RouteSettings(name: '/DeviceScreen'),
-    );
-    Navigator.of(context).push(route).then((_) {
-      if (!device.isConnected) {
+      if (e is FlutterBluePlusException && e.code == FbpErrorCode.connectionCanceled.index) {
+        // Bỏ qua lỗi hủy kết nối do người dùng
+      } else {
+        Snackbar.show(ABC.c, prettyException("Connect Error:", e), success: false);
+      }
+      if (mounted) {
         setState(() {
-          _connectedDevice = null;
+          _autoConnectingDevice = null; // Reset nếu kết nối thất bại
         });
-        _startInitialScan();
+      }
+    }).whenComplete(() {
+      // Khi quá trình kết nối hoàn tất (thành công hoặc thất bại)
+      if (device.isConnected && mounted) {
+        Navigator.of(context)
+            .pushReplacement(
+          // Sử dụng pushReplacement để tránh tích lũy màn hình
+          MaterialPageRoute(
+            builder: (context) => DeviceScreen(
+              device: device,
+              username: widget.username, // Truyền username
+              password: widget.password, // Truyền password
+            ),
+            settings: const RouteSettings(name: '/DeviceScreen'),
+          ),
+        )
+            .then((_) {
+          // Khi quay lại từ DeviceScreen
+          if (!device.isConnected && mounted) {
+            setState(() {
+              _autoConnectingDevice = null; // Reset trạng thái tự động kết nối
+            });
+            _startInitialScan(); // Bắt đầu quét lại
+          }
+        });
+      } else {
+        // Nếu không kết nối được, reset _autoConnectingDevice để có thể thử lại
+        if (mounted) {
+          setState(() {
+            _autoConnectingDevice = null;
+          });
+        }
       }
     });
   }
 
   Future onRefresh() {
     if (_isScanning == false) {
-      FlutterBluePlus.startScan(timeout: const Duration(seconds: 15));
+      FlutterBluePlus.startScan(timeout: const Duration(seconds: 10)); // Giảm thời gian quét khi refresh
     }
     if (mounted) {
       setState(() {});
     }
-    return Future.delayed(Duration(milliseconds: 500));
+    return Future.delayed(const Duration(milliseconds: 500));
   }
 
   Widget buildScanButton() {
     return Row(children: [
-      if (FlutterBluePlus.isScanningNow)
+      if (_isScanning ||
+          (_autoConnectingDevice != null &&
+              !_autoConnectingDevice!
+                  .isConnected)) // Hiển thị spinner khi đang quét hoặc đang tự động kết nối (nhưng chưa kết nối xong)
         buildSpinner()
       else
         ElevatedButton(
@@ -204,7 +245,7 @@ class _ScanScreenState extends State<ScanScreen> {
               backgroundColor: Theme.of(context).primaryColor,
               foregroundColor: Colors.white,
             ),
-            child: Text("SCAN"))
+            child: const Text("SCAN"))
     ]);
   }
 
@@ -213,7 +254,7 @@ class _ScanScreenState extends State<ScanScreen> {
       padding: const EdgeInsets.all(14.0),
       child: AspectRatio(
         aspectRatio: 1.0,
-        child: CircularProgressIndicator(
+        child: const CircularProgressIndicator(
           backgroundColor: Colors.black12,
           color: Colors.black26,
         ),
@@ -233,7 +274,7 @@ class _ScanScreenState extends State<ScanScreen> {
                   username: widget.username,
                   password: widget.password,
                 ),
-                settings: RouteSettings(name: '/DeviceScreen'),
+                settings: const RouteSettings(name: '/DeviceScreen'),
               ),
             ),
             onConnect: () => onConnectPressed(d),
@@ -243,7 +284,12 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Iterable<Widget> _buildScanResultTiles() {
-    return _scanResults.map((r) => ScanResultTile(result: r, onTap: () => onConnectPressed(r.device)));
+    // Hiển thị tất cả các thiết bị được quét thấy
+    return _scanResults.where((r) {
+      // Đảm bảo advName không rỗng và không phải là thiết bị đang được tự động kết nối
+      return r.advertisementData.advName.isNotEmpty &&
+          (_autoConnectingDevice == null || _autoConnectingDevice!.remoteId != r.device.remoteId);
+    }).map((r) => ScanResultTile(result: r, onTap: () => onConnectPressed(r.device)));
   }
 
   @override
@@ -257,14 +303,14 @@ class _ScanScreenState extends State<ScanScreen> {
         ),
         body: RefreshIndicator(
           onRefresh: onRefresh,
-          child: _connectedDevice != null &&
-                  _connectedDevice!.isConnected // If a device is connected, show only relevant controls
+          child: (_autoConnectingDevice != null &&
+                  _autoConnectingDevice!.isConnected) // Nếu thiết bị đã kết nối (thông qua auto-connect hoặc manual)
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
-                        'Connected to: ${_connectedDevice!.platformName}',
+                        'Connected to: ${_autoConnectingDevice!.platformName}',
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                       const SizedBox(height: 20),
@@ -274,17 +320,17 @@ class _ScanScreenState extends State<ScanScreen> {
                               .push(
                             MaterialPageRoute(
                               builder: (context) => DeviceScreen(
-                                device: _connectedDevice!,
+                                device: _autoConnectingDevice!,
                                 username: widget.username,
                                 password: widget.password,
                               ),
-                              settings: RouteSettings(name: '/DeviceScreen'),
+                              settings: const RouteSettings(name: '/DeviceScreen'),
                             ),
                           )
                               .then((_) {
-                            if (!_connectedDevice!.isConnected) {
+                            if (!_autoConnectingDevice!.isConnected && mounted) {
                               setState(() {
-                                _connectedDevice = null;
+                                _autoConnectingDevice = null;
                               });
                               _startInitialScan();
                             }
@@ -297,6 +343,12 @@ class _ScanScreenState extends State<ScanScreen> {
                 )
               : ListView(
                   children: <Widget>[
+                    if (_autoConnectingDevice != null &&
+                        !_autoConnectingDevice!.isConnected) // Hiển thị thông báo đang kết nối nếu chưa kết nối xong
+                      ListTile(
+                        title: Text('Connecting to: ${_autoConnectingDevice!.platformName}...'),
+                        trailing: buildSpinner(),
+                      ),
                     ..._buildSystemDeviceTiles(),
                     ..._buildScanResultTiles(),
                   ],

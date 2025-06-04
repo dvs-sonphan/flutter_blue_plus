@@ -32,7 +32,6 @@ class _LoginScreenState extends State<LoginScreen> {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (context) => ScanScreen(
-          initialDeviceNameToConnect: username, // Pass username as device name to connect
           username: username, // Truyền username
           password: password, // Truyền password
         ),
@@ -45,9 +44,9 @@ class _LoginScreenState extends State<LoginScreen> {
     return ScaffoldMessenger(
       key: Snackbar.snackBarKeyA, // Use a specific key for this screen
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Login'),
-        ),
+        // appBar: AppBar(
+        //   title: const Text('Login'),
+        // ),
         body: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16.0),
