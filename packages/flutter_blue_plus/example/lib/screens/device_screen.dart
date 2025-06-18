@@ -47,8 +47,8 @@ class _DeviceScreenState extends State<DeviceScreen> {
   String? _lastAutoCommand; // Lệnh AUTO cuối cùng (LOCK hoặc UNLOCK)
   List<int> _rssiHistory = []; // Lịch sử RSSI
   List<double> _distanceHistory = []; // Lịch sử khoảng cách
-  static const int _rssiWindowSize = 5; // Kích thước cửa sổ trung bình RSSI
-  static const int _distanceWindowSize = 5; // Kích thước cửa sổ trung bình khoảng cách
+  static const int _rssiWindowSize = 3; // Kích thước cửa sổ trung bình RSSI
+  static const int _distanceWindowSize = 3; // Kích thước cửa sổ trung bình khoảng cách
   int? _lastNotificationTime; // Thời gian thông báo gần nhất
   DateTime? _lastCommandTime; // Thời gian gửi lệnh gần nhất
   static const Duration _minCommandInterval = Duration(seconds: 3); // Khoảng thời gian tối thiểu giữa các lệnh
@@ -414,7 +414,7 @@ class _DeviceScreenState extends State<DeviceScreen> {
     });
   }
 
-  // Xử lý lệnh AUTO (khóa/mở khóa dựa trên khoảng cách)
+// Xử lý lệnh AUTO (khóa/mở khóa dựa trên khoảng cách và xu hướng)
   Future<void> _handleAutoModeCommand() async {
     if (_averageDistance == null || _isSessionExpired) {
       if (_isSessionExpired) {
@@ -428,16 +428,23 @@ class _DeviceScreenState extends State<DeviceScreen> {
       return;
     }
 
-    if (_averageDistance! < 5 && _lastAutoCommand != "UNLOCK" && isConnected && _controlCharacteristic != null) {
-      final username = "dvs25";
-      final password = widget.password ?? "default_pass";
-      final unlockCommandString = "$username,$password,UNLOCK#";
-      final unlockCommandBytes = utf8.encode(unlockCommandString);
-      await _writeControlCommand(unlockCommandBytes, "UNLOCK");
-      _lastAutoCommand = "UNLOCK";
-      _lastCommandTime = DateTime.now();
-      print("Auto Mode: Đã gửi lệnh UNLOCK ở trung bình khoảng cách $_averageDistance mét");
-    } else if (_averageDistance! > 5 && _lastAutoCommand != "LOCK" && isConnected && _controlCharacteristic != null) {
+    // Kiểm tra xu hướng khoảng cách
+    bool isDistanceIncreasing = false;
+    bool isDistanceDecreasing = false;
+
+    if (_distanceHistory.length >= 2) {
+      // So sánh giá trị cuối cùng và áp cuối trong lịch sử khoảng cách
+      final lastDistance = _distanceHistory[_distanceHistory.length - 1];
+      final secondLastDistance = _distanceHistory[_distanceHistory.length - 2];
+      isDistanceIncreasing = lastDistance > secondLastDistance;
+      isDistanceDecreasing = lastDistance < secondLastDistance;
+    }
+
+    if (isDistanceIncreasing &&
+        _averageDistance! > 10 &&
+        _lastAutoCommand != "LOCK" &&
+        isConnected &&
+        _controlCharacteristic != null) {
       final username = "dvs25";
       final password = widget.password ?? "default_pass";
       final lockCommandString = "$username,$password,LOCK#";
@@ -445,7 +452,20 @@ class _DeviceScreenState extends State<DeviceScreen> {
       await _writeControlCommand(lockCommandBytes, "LOCK");
       _lastAutoCommand = "LOCK";
       _lastCommandTime = DateTime.now();
-      print("Auto Mode: Đã gửi lệnh LOCK ở trung bình khoảng cách $_averageDistance mét");
+      print("Auto Mode: Đã gửi lệnh LOCK ở trung bình khoảng cách $_averageDistance mét (tăng dần)");
+    } else if (isDistanceDecreasing &&
+        _averageDistance! < 10 &&
+        _lastAutoCommand != "UNLOCK" &&
+        isConnected &&
+        _controlCharacteristic != null) {
+      final username = "dvs25";
+      final password = widget.password ?? "default_pass";
+      final unlockCommandString = "$username,$password,UNLOCK#";
+      final unlockCommandBytes = utf8.encode(unlockCommandString);
+      await _writeControlCommand(unlockCommandBytes, "UNLOCK");
+      _lastAutoCommand = "UNLOCK";
+      _lastCommandTime = DateTime.now();
+      print("Auto Mode: Đã gửi lệnh UNLOCK ở trung bình khoảng cách $_averageDistance mét (giảm dần)");
     }
   }
 
